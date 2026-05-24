@@ -6,8 +6,21 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow CamAI to access your camera so it can analyze the scene and guide your pose."
+        }
+      ]
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow CamAI to access your camera so it can analyze the scene and guide your pose.",
+        "NSPhotoLibraryAddUsageDescription": "Allow CamAI to save captured photos to your library.",
+        "NSPhotoLibraryUsageDescription": "Allow CamAI to access your photo library when saving completed shots."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,6 +32,9 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-font"
+    ]
   }
 }
