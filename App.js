@@ -66,6 +66,8 @@ export default function App() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedPhoto, setLastSavedPhoto] = useState(null);
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const analysisIntervalRef = useRef(null);
 
   const cameraAllowed = cameraPermission?.granted ?? false;
   const mediaAllowed = mediaPermission?.granted ?? false;
@@ -74,13 +76,14 @@ export default function App() {
     [poseOptions, selectedPoseId],
   );
 
-  const runSceneAnalysis = async (nextPrompt = scenePrompt, nextMode = mode) => {
+  const runSceneAnalysis = async (nextPrompt = scenePrompt, nextMode = mode, opts = {}) => {
     setIsAnalyzing(true);
     try {
       const result = await analyzeSceneAndGeneratePoses({
         prompt: nextPrompt,
         mode: nextMode,
         apiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY,
+        imageBase64: opts.imageBase64,
       });
 
       setSceneState({
@@ -97,6 +100,29 @@ export default function App() {
       Alert.alert('CamAI', 'The scene analysis step could not complete.');
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const captureFrameForAnalysis = async () => {
+    if (!cameraRef.current || !cameraReady || isAnalyzing) return null;
+
+    try {
+      // capture a lower-quality base64 image for analysis
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.6,
+        base64: true,
+        skipProcessing: true,
+      });
+
+      const imageBase64 = photo?.base64 ? `data:image/jpeg;base64,${photo.base64}` : null;
+      if (imageBase64) {
+        void runSceneAnalysis(scenePrompt, mode, { imageBase64 });
+      }
+
+      return imageBase64;
+    } catch (error) {
+      // don't block the UI if frame capture fails
+      return null;
     }
   };
 
@@ -148,6 +174,32 @@ export default function App() {
     analysisRunRef.current = true;
     void runSceneAnalysis(scenePrompt, mode);
   }, [fontsLoaded]);
+
+  // Periodic analysis while in full-screen mode
+  useEffect(() => {
+    if (!isFullScreen) {
+      if (analysisIntervalRef.current) {
+        clearInterval(analysisIntervalRef.current);
+        analysisIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // run immediately once when entering full-screen
+    void captureFrameForAnalysis();
+
+    // then run periodically
+    analysisIntervalRef.current = setInterval(() => {
+      void captureFrameForAnalysis();
+    }, 5000);
+
+    return () => {
+      if (analysisIntervalRef.current) {
+        clearInterval(analysisIntervalRef.current);
+        analysisIntervalRef.current = null;
+      }
+    };
+  }, [isFullScreen, cameraReady, mode, scenePrompt]);
 
   useEffect(() => {
     if (captureMode !== 'auto' || !cameraReady || !selectedPose || isAnalyzing || isCapturing) {
@@ -289,6 +341,13 @@ export default function App() {
             </Pressable>
 
             <Pressable
+              style={[styles.secondaryButton, { width: 120 }]}
+              onPress={() => setIsFullScreen(true)}
+            >
+              <Text style={styles.secondaryButtonLabel}>Full screen</Text>
+            </Pressable>
+
+            <Pressable
               style={styles.primaryButton}
               onPress={() => capturePhotoRef.current?.('manual')}
               disabled={isCapturing || isSaving}
@@ -301,6 +360,45 @@ export default function App() {
             </Pressable>
           </View>
         </View>
+
+        {isFullScreen && (
+          <View style={styles.fullScreenContainer} pointerEvents="box-none">
+            <View style={styles.fullScreenCameraStage}>
+              <CameraView
+                ref={cameraRef}
+                style={styles.fullScreenCamera}
+                facing="back"
+                onCameraReady={() => setCameraReady(true)}
+              />
+
+              <SkeletonOverlay pose={selectedPose} mode={mode} alignmentScore={alignmentScore} />
+
+              <View style={styles.fullScreenTopRight}>
+                <View style={styles.cameraBadge}>
+                  <Text style={styles.cameraBadgeText}>{isAnalyzing ? 'Analyzing…' : 'Live'}</Text>
+                </View>
+              </View>
+
+              <View style={styles.fullScreenControls}>
+                <Pressable
+                  style={[styles.primaryButton, styles.fullScreenCaptureButton]}
+                  onPress={() => capturePhotoRef.current?.('manual')}
+                  disabled={isCapturing || isSaving}
+                >
+                  {isCapturing || isSaving ? (
+                    <ActivityIndicator color="#08101a" />
+                  ) : (
+                    <Text style={styles.primaryButtonLabel}>Capture suggested pose</Text>
+                  )}
+                </Pressable>
+
+                <Pressable style={styles.secondaryButton} onPress={() => setIsFullScreen(false)}>
+                  <Text style={styles.secondaryButtonLabel}>Exit</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        )}
 
         <View style={styles.panel}>
           <View style={styles.sectionHeader}>
@@ -549,6 +647,40 @@ const styles = StyleSheet.create({
   },
   cameraPreview: {
     ...StyleSheet.absoluteFillObject,
+  },
+  fullScreenContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 999,
+  },
+  fullScreenCameraStage: {
+    flex: 1,
+    backgroundColor: '#07111d',
+  },
+  fullScreenCamera: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  fullScreenTopRight: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+  },
+  fullScreenControls: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 40,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  fullScreenCaptureButton: {
+    flex: 1,
+    marginRight: 12,
   },
   cameraBadgeRow: {
     position: 'absolute',
